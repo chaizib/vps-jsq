@@ -179,6 +179,36 @@ function prepareDateInputsForExport(node) {
     };
 }
 
+function prepareSelectInputsForExport(node) {
+    const restoreTasks = [];
+    const selects = node.querySelectorAll('select');
+
+    selects.forEach((select) => {
+        const optionSnapshots = Array.from(select.options).map((option) => ({
+            defaultSelected: option.defaultSelected,
+            hasSelectedAttr: option.hasAttribute('selected')
+        }));
+
+        Array.from(select.options).forEach((option) => {
+            const isCurrent = option.value === select.value;
+            option.defaultSelected = isCurrent;
+            option.toggleAttribute('selected', isCurrent);
+        });
+
+        restoreTasks.push(() => {
+            Array.from(select.options).forEach((option, index) => {
+                const snapshot = optionSnapshots[index];
+                option.defaultSelected = snapshot.defaultSelected;
+                option.toggleAttribute('selected', snapshot.hasSelectedAttr);
+            });
+        });
+    });
+
+    return () => {
+        restoreTasks.reverse().forEach((restore) => restore());
+    };
+}
+
 function saveInputsToCookie() {
     const data = {
         price: els.price.value,
@@ -473,6 +503,7 @@ async function generateImage() {
         const node = document.getElementById('mainCard');
         const isDark = document.documentElement.classList.contains('dark');
         const restoreDateInputs = prepareDateInputsForExport(node);
+        const restoreSelectInputs = prepareSelectInputsForExport(node);
 
         try {
             const htmlToImage = await getHtmlToImage();
@@ -499,6 +530,7 @@ async function generateImage() {
             closeImageModal();
             showToast('生成出错');
         } finally {
+            restoreSelectInputs();
             restoreDateInputs();
         }
     }, 100);
