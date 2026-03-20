@@ -1,12 +1,12 @@
-import './style.css';
-import * as htmlToImage from 'html-to-image';
+﻿import './style.css';
 
 const API_URL = 'https://open.er-api.com/v6/latest/CNY';
+let htmlToImageModulePromise = null;
 
 const currencySymbols = {
-    'USD': '$', 'EUR': '€', 'GBP': '£', 'JPY': '¥', 
-    'CNY': '¥', 'HKD': 'HK$', 'AUD': 'A$', 'SGD': 'S$',
-    'KRW': '₩', 'TWD': 'NT$', 'CAD': 'C$'
+    'USD': '$', 'EUR': '\u20AC', 'GBP': '\u00A3', 'JPY': '\u00A5',
+    'CNY': '\u00A5', 'HKD': 'HK$', 'AUD': 'A$', 'SGD': 'S$',
+    'KRW': '\u20A9', 'TWD': 'NT$', 'CAD': 'C$'
 };
 
 const els = {
@@ -14,7 +14,9 @@ const els = {
     currency: document.getElementById('currency'),
     cycles: document.getElementsByName('cycle'),
     dueDate: document.getElementById('dueDate'),
+    dueDateDisplay: document.getElementById('dueDateDisplay'),
     tradeDate: document.getElementById('tradeDate'),
+    tradeDateDisplay: document.getElementById('tradeDateDisplay'),
     customRate: document.getElementById('customRate'),
     apiRateDisplay: document.getElementById('apiRateDisplay'),
     refreshBtn: document.getElementById('refreshRateBtn'),
@@ -46,9 +48,16 @@ window.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     const debouncedSave = debounce(saveInputsToCookie, 500);
 
-    [els.price, els.currency, els.dueDate, els.tradeDate, els.customRate].forEach(el => el.addEventListener('input', () => {
+    [els.price, els.dueDate, els.tradeDate, els.customRate].forEach(el => el.addEventListener('input', () => {
+        syncDateDisplays();
         calculate();
         debouncedSave();
+    }));
+
+    [els.dueDate, els.tradeDate].forEach(el => el.addEventListener('change', () => {
+        syncDateDisplays();
+        calculate();
+        saveInputsToCookie();
     }));
     
     els.cycles.forEach(radio => radio.addEventListener('change', () => {
@@ -59,6 +68,8 @@ function setupEventListeners() {
     els.currency.addEventListener('change', () => {
         updateCurrencySymbol();
         initRates(); 
+        syncDateDisplays();
+        calculate();
         saveInputsToCookie();
     });
 
@@ -101,13 +112,24 @@ function updateToggleUI(isDark) {
 }
 
 function setCookie(name, value, hours) {
-    const d = new Date();
-    d.setTime(d.getTime() + (hours*60*60*1000));
-    const expires = "expires="+ d.toUTCString();
-    document.cookie = name + "=" + encodeURIComponent(value) + ";" + expires + ";path=/";
+    const expiresAt = Date.now() + (hours * 60 * 60 * 1000);
+    localStorage.setItem(name, JSON.stringify({ value, expiresAt }));
 }
 
 function getCookie(name) {
+    const stored = localStorage.getItem(name);
+    if (stored) {
+        try {
+            const parsed = JSON.parse(stored);
+            if (!parsed.expiresAt || parsed.expiresAt > Date.now()) {
+                return parsed.value || "";
+            }
+            localStorage.removeItem(name);
+        } catch (e) {
+            localStorage.removeItem(name);
+        }
+    }
+
     const cname = name + "=";
     const decodedCookie = decodeURIComponent(document.cookie);
     const ca = decodedCookie.split(';');
@@ -123,16 +145,49 @@ function getCookie(name) {
     return "";
 }
 
+async function getHtmlToImage() {
+    if (!htmlToImageModulePromise) {
+        htmlToImageModulePromise = import('html-to-image');
+    }
+
+    return htmlToImageModulePromise;
+}
+
+function formatDateForDisplay(value) {
+    return value ? value.replace(/-/g, '/') : '--/--/--';
+}
+
+function syncDateDisplays() {
+    els.dueDateDisplay.textContent = formatDateForDisplay(els.dueDate.value);
+    els.tradeDateDisplay.textContent = formatDateForDisplay(els.tradeDate.value);
+}
+
+function prepareDateInputsForExport(node) {
+    const restoreTasks = [];
+    const nativeInputs = node.querySelectorAll('.date-native');
+
+    nativeInputs.forEach((input) => {
+        input.style.display = 'none';
+
+        restoreTasks.push(() => {
+            input.style.display = '';
+        });
+    });
+
+    return () => {
+        restoreTasks.reverse().forEach((restore) => restore());
+    };
+}
+
 function saveInputsToCookie() {
     const data = {
         price: els.price.value,
         currency: els.currency.value,
         cycle: Array.from(els.cycles).find(r => r.checked)?.value || "365",
         dueDate: els.dueDate.value,
-        tradeDate: els.tradeDate.value,
         customRate: els.customRate.value
     };
-    setCookie("vps_inputs", JSON.stringify(data), 24 * 30);
+    setCookie("vps_inputs", JSON.stringify(data), 0.5);
 }
 
 function loadInputsFromCookie() {
@@ -143,7 +198,6 @@ function loadInputsFromCookie() {
             if(data.price) els.price.value = data.price;
             if(data.currency) els.currency.value = data.currency;
             if(data.dueDate) els.dueDate.value = data.dueDate;
-            if(data.tradeDate) els.tradeDate.value = data.tradeDate;
             if(data.customRate) els.customRate.value = data.customRate;
             if(data.cycle) {
                 const radio = document.querySelector(`input[name="cycle"][value="${data.cycle}"]`);
@@ -274,9 +328,9 @@ function showToast(msg) {
 }
 
 function initDates() {
-    if (els.tradeDate.value && els.dueDate.value) return;
     const now = new Date();
     els.tradeDate.value = formatDate(now);
+    if (els.dueDate.value) return;
     const currentYear = now.getFullYear();
     const thisYearNov25 = new Date(currentYear, 10, 25); 
     let targetDueDate;
@@ -301,6 +355,8 @@ function updateCurrencySymbol() {
 }
 
 function calculate() {
+    syncDateDisplays();
+
     const price = parseFloat(els.price.value) || 0;
     const rate = parseFloat(els.customRate.value) || 0;
     const due = new Date(els.dueDate.value);
@@ -351,7 +407,7 @@ function copyResult() {
     const rate = els.customRate.value || "0";
     const days = els.daysRemaining.textContent;
     const valCNY = els.finalValue.textContent;
-    const valOrig = els.originalCurrencyValue.textContent.replace('≈ ', '').split(' ')[0];
+    const valOrig = els.originalCurrencyValue.textContent.replace('≈', '').trim().split(' ')[0];
     const tradeDate = els.tradeDate.value;
     const dueDate = els.dueDate.value;
     
@@ -406,51 +462,44 @@ modal.el.addEventListener('click', (e) => {
 async function generateImage() {
     console.log('generateImage called');
     
-    // Lazy load html-to-image library is no longer needed as we import it
-    // if (typeof htmlToImage === 'undefined') { ... } is removed
-    
     // Show modal immediately to indicate processing
     modal.el.classList.remove('hidden');
     // Force reflow
-    void modal.el.offsetWidth; 
+    void modal.el.offsetWidth;
     modal.el.classList.add('opacity-100');
     
     // Use setTimeout to allow UI to update before heavy lifting
-    setTimeout(() => {
+    setTimeout(async () => {
         const node = document.getElementById('mainCard');
         const isDark = document.documentElement.classList.contains('dark');
-        
+        const restoreDateInputs = prepareDateInputsForExport(node);
+
         try {
-            // 使用 html-to-image 替代 html2canvas 以获得更好的渲染效果（无错位）
-            htmlToImage.toPng(node, {
+            const htmlToImage = await getHtmlToImage();
+            const dataUrl = await htmlToImage.toPng(node, {
                 quality: 0.95,
-                pixelRatio: 2, // 高清屏支持
-                backgroundColor: isDark ? '#000000' : '#f0f2f5', // 确保背景色正确
+                pixelRatio: 2,
+                backgroundColor: isDark ? '#000000' : '#f0f2f5',
                 filter: (element) => {
-                    // Safety check for element and id
                     if (!element || !element.id) return true;
                     return element.id !== 'btnContainer';
                 },
                 style: {
-                    transform: 'scale(1)', // 防止缩放导致的错位
+                    transform: 'scale(1)',
                 }
-            })
-            .then(function (dataUrl) {
-                console.log('Image generated successfully');
-                modal.loading.classList.add('hidden');
-                modal.img.src = dataUrl;
-                modal.img.classList.remove('hidden');
-                modal.actions.classList.remove('hidden');
-            })
-            .catch(function (error) {
-                console.error('Image generation failed:', error);
-                closeImageModal();
-                showToast("生成图片失败");
             });
+
+            console.log('Image generated successfully');
+            modal.loading.classList.add('hidden');
+            modal.img.src = dataUrl;
+            modal.img.classList.remove('hidden');
+            modal.actions.classList.remove('hidden');
         } catch (e) {
             console.error('Synchronous error during image generation:', e);
             closeImageModal();
-            showToast("生成出错");
+            showToast('生成出错');
+        } finally {
+            restoreDateInputs();
         }
     }, 100);
 }
@@ -462,3 +511,4 @@ window.closeImageModal = closeImageModal;
 window.hideRateLimitTip = hideRateLimitTip;
 window.manualRefreshRate = manualRefreshRate;
 window.toggleTheme = toggleTheme;
+
