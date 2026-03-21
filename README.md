@@ -9,7 +9,7 @@ HTML 版本，移步 [vps-jsq-html](https://github.com/verkyer/vps-jsq-html)
 - 📅 自动计算剩余天数和金额
 - 🎨 支持深色/浅色模式切换
 - 🖼️ **一键生成交易卡片图片** (纯前端生成，无隐私泄露)
-- 📱 适配移动端和 PC 端
+- 📱 适配移动端和 PC 端。
 
 ---
 
